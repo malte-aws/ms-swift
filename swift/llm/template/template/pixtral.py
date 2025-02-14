@@ -21,7 +21,7 @@ class PixtralTemplate(Template):
         if idx_list:
             image_inputs = processor.image_processor(images, patch_size=processor.patch_size, return_tensors='pt')
             encoded['pixel_values'] = image_inputs['pixel_values'][0]
-            image_sizes = image_inputs['image_sizes'][0]
+            image_sizes = image_inputs['image_sizes']
             added_tokens_len = 0
             for idx, image_size in zip(idx_list, image_sizes):
                 height, width = image_size
