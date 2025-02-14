@@ -38,6 +38,7 @@ class PixtralTemplate(Template):
                     labels = labels[:idx + added_tokens_len] + [-100] * len(img_tokens) + labels[idx + added_tokens_len
                                                                                                  + 1:]
                 added_tokens_len += len(img_tokens) - 1
+            encoded['image_sizes'] = image_inputs
             encoded['input_ids'] = input_ids
             encoded['labels'] = labels
 
