@@ -46,9 +46,13 @@ class PixtralTemplate(Template):
 
     def _data_collator(self, batch: List[Dict[str, Any]], *, padding_to: Optional[int] = None) -> Dict[str, Any]:
         pixel_values = self.gather_list(batch, 'pixel_values')
+        image_sizes = self.gather_list(batch, 'image_sizes')
         res = super()._data_collator(batch, padding_to=padding_to)
         if pixel_values:
             res['pixel_values'] = pixel_values
+        if image_sizes:
+            res['image_sizes'] = image_sizes
+
         return res
 
 
