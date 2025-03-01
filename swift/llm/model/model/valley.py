@@ -21,14 +21,15 @@ def get_model_tokenizer_valley(model_dir: str,
     if not local_repo_path:
         repo_path = 'https://github.com/bytedance/Valley.git'
         local_repo_path = git_clone_github(repo_path)
-    sys.path.append(os.path.join(local_repo_path))
+    sys.path.append(local_repo_path)
 
     if llm_model_type == 'valley':
         from transformers.modeling_outputs import CausalLMOutputWithPast
         from valley_eagle.model.language_model.valley_qwen2 import ValleyQwen2ForCausalLM, ValleyConfig
         model_config = ValleyConfig.from_pretrained(model_dir)
-        model_config.mm_vision_tower = safe_snapshot_download('AI-ModelScope/siglip-so400m-patch14-384')
-        model_config.eagle_vision_tower = safe_snapshot_download('Qwen/Qwen2-VL-7B-Instruct')
+        model_config.mm_vision_tower = safe_snapshot_download(
+            'AI-ModelScope/siglip-so400m-patch14-384', check_local=True)
+        model_config.eagle_vision_tower = safe_snapshot_download('Qwen/Qwen2-VL-7B-Instruct', check_local=True)
         automodel_class = ValleyQwen2ForCausalLM
 
         if not hasattr(ValleyQwen2ForCausalLM, '_origin_forward'):

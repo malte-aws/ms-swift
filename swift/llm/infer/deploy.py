@@ -3,7 +3,7 @@ import asyncio
 import inspect
 import multiprocessing
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from http import HTTPStatus
 from threading import Thread
@@ -16,8 +16,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from swift.llm import AdapterRequest, DeployArguments
+from swift.llm.infer.protocol import MultiModalRequestMixin
 from swift.plugin import InferStats
-from swift.utils import get_logger
+from swift.utils import JsonlWriter, get_logger
 from .infer import SwiftInfer
 from .infer_engine import InferClient
 from .protocol import ChatCompletionRequest, CompletionRequest, Model, ModelList
@@ -57,6 +58,7 @@ class SwiftDeploy(SwiftInfer):
         args = self.args
         if args.log_interval > 0:
             thread = Thread(target=lambda: asyncio.run(self._log_stats_hook()))
+            thread.daemon = True
             thread.start()
         try:
             yield
@@ -108,15 +110,25 @@ class SwiftDeploy(SwiftInfer):
     def _post_process(self, request_info, response, return_cmpl_response: bool = False):
         args = self.args
 
+        for i in range(len(response.choices)):
+            if not hasattr(response.choices[i], 'message') or isinstance(response.choices[i].message.content, str):
+                continue
+            for j, content in enumerate(response.choices[i].message.content):
+                if content['type'] == 'image':
+                    b64_image = MultiModalRequestMixin.to_base64(content['image'])
+                    response.choices[i].message.content[j]['image'] = f'data:image/jpg;base64,{b64_image}'
+
         is_finished = all(response.choices[i].finish_reason for i in range(len(response.choices)))
         if return_cmpl_response:
             response = response.to_cmpl_response()
         if is_finished:
             if args.log_interval > 0:
                 self.infer_stats.update(response)
+            data = {'response': asdict(response), **request_info}
             if self.jsonl_writer:
-                data = {'response': asdict(response), **request_info}
                 self.jsonl_writer.append(data)
+            if self.args.verbose:
+                logger.info(data)
         return response
 
     def _set_request_config(self, request_config) -> None:
@@ -149,8 +161,6 @@ class SwiftDeploy(SwiftInfer):
 
         def pre_infer_hook(kwargs):
             request_info['generation_config'] = kwargs['generation_config']
-            if args.verbose:
-                logger.info(request_info)
             return kwargs
 
         infer_kwargs['pre_infer_hook'] = pre_infer_hook
@@ -178,6 +188,7 @@ class SwiftDeploy(SwiftInfer):
 
     def run(self):
         args = self.args
+        self.jsonl_writer = JsonlWriter(args.result_path) if args.result_path else None
         logger.info(f'model_list: {self._get_model_list()}')
         uvicorn.run(
             self.app, host=args.host, port=args.port, ssl_keyfile=args.ssl_keyfile, ssl_certfile=args.ssl_certfile)

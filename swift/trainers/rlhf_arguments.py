@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 from trl import CPOConfig as HfCPOConfig
 from trl import DPOConfig as HfDPOConfig
@@ -9,7 +9,7 @@ from trl import ORPOConfig as HfORPOConfig
 from trl import PPOConfig as HfPPOConfig
 from trl import RewardConfig as HfRewardConfig
 
-from .arguments import GRPOVllmArguments, SwiftArgumentsMixin
+from .arguments import GRPOArgumentsMixin, SwiftArgumentsMixin
 
 
 @dataclass
@@ -43,7 +43,12 @@ class PPOConfig(SwiftArgumentsMixin, HfPPOConfig):
 
 
 @dataclass
-class GRPOConfig(GRPOVllmArguments, SwiftArgumentsMixin, HfGRPOConfig):
-    top_k: Optional[int] = None
-    top_p: Optional[float] = None
-    repetition_penalty: Optional[float] = None
+class GRPOConfig(GRPOArgumentsMixin, SwiftArgumentsMixin, HfGRPOConfig):
+    stop_words: List[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        from swift.llm.argument.base_args.model_args import ModelArguments
+        super().__post_init__()
+        if self.cosine_max_len is None:
+            self.cosine_max_len = self.max_completion_length
+        self.vllm_limit_mm_per_prompt = ModelArguments.parse_to_dict(self.vllm_limit_mm_per_prompt)

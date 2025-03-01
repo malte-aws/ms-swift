@@ -376,7 +376,7 @@ class HFHub(HubOperation):
 
     @classmethod
     def create_model_repo(cls, repo_id: str, token: Optional[str] = None, private: bool = False) -> str:
-        return api.create_model(repo_id, token=token, private=private)
+        return api.create_repo(repo_id, token=token, private=private)
 
     @classmethod
     def push_to_hub(cls,
@@ -394,7 +394,7 @@ class HFHub(HubOperation):
         if revision is None or revision == 'master':
             revision = 'main'
         return api.upload_folder(
-            repo_id,
+            repo_id=repo_id,
             folder_path=folder_path,
             path_in_repo=path_in_repo,
             commit_message=commit_message,

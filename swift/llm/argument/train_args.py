@@ -1,4 +1,5 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
+import importlib
 import os
 import sys
 from dataclasses import dataclass, field
@@ -10,8 +11,9 @@ from transformers.utils.versions import require_version
 
 from swift.plugin import LOSS_MAPPING
 from swift.trainers import TrainerFactory
-from swift.utils import (add_version_to_work_dir, get_logger, get_pai_tensorboard_dir, is_liger_available,
-                         is_local_master, is_mp, is_pai_training_job, use_torchacc)
+from swift.utils import (add_version_to_work_dir, get_device_count, get_logger, get_pai_tensorboard_dir,
+                         is_liger_available, is_local_master, is_mp, is_pai_training_job, is_swanlab_available,
+                         use_torchacc)
 from .base_args import BaseArguments, to_abspath
 from .tuner_args import TunerArguments
 
@@ -76,6 +78,35 @@ class Seq2SeqTrainingOverrideArguments(Seq2SeqTrainingArguments):
 
 
 @dataclass
+class SwanlabArguments:
+
+    swanlab_token: Optional[str] = None
+    swanlab_project: Optional[str] = None
+    swanlab_workspace: Optional[str] = None
+    swanlab_exp_name: Optional[str] = None
+    swanlab_mode: Literal['cloud', 'local'] = 'cloud'
+
+    def _init_swanlab(self):
+        if not is_swanlab_available():
+            raise ValueError('You are using swanlab as `report_to`, please install swanlab by ' '`pip install swanlab`')
+        if not self.swanlab_project:
+            raise ValueError('Please specify a project existed in your swanlab page(https://swanlab.cn/space/~)')
+        if not self.swanlab_exp_name:
+            self.swanlab_exp_name = self.output_dir
+        from transformers.integrations import INTEGRATION_TO_CALLBACK
+        import swanlab
+        from swanlab.integration.transformers import SwanLabCallback
+        if self.swanlab_token:
+            swanlab.login(self.swanlab_token)
+        INTEGRATION_TO_CALLBACK['swanlab'] = SwanLabCallback(
+            project=self.swanlab_project,
+            workspace=self.swanlab_workspace,
+            experiment_name=self.swanlab_exp_name,
+            mode=self.swanlab_mode,
+        )
+
+
+@dataclass
 class TorchAccArguments:
     model_layer_cls_name: Optional[str] = field(
         default=None,
@@ -91,7 +122,8 @@ class TorchAccArguments:
 
 
 @dataclass
-class TrainArguments(TorchAccArguments, TunerArguments, Seq2SeqTrainingOverrideArguments, BaseArguments):
+class TrainArguments(SwanlabArguments, TorchAccArguments, TunerArguments, Seq2SeqTrainingOverrideArguments,
+                     BaseArguments):
     """
     TrainArguments class is a dataclass that inherits from multiple argument classes:
     TorchAccArguments, TunerArguments, Seq2SeqTrainingOverrideArguments, and BaseArguments.
@@ -128,6 +160,10 @@ class TrainArguments(TorchAccArguments, TunerArguments, Seq2SeqTrainingOverrideA
     acc_strategy: Literal['token', 'seq'] = 'token'
     max_new_tokens: int = 64
     temperature: float = 0.
+    load_args: bool = False
+
+    # zero++
+    zero_hpz_partition_size: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.resume_from_checkpoint:
@@ -171,6 +207,9 @@ class TrainArguments(TorchAccArguments, TunerArguments, Seq2SeqTrainingOverrideA
         self._add_version()
         self.import_plugin()
 
+        if 'swanlab' in self.report_to:
+            self._init_swanlab()
+
     def import_plugin(self):
         if not self.external_plugins:
             return
@@ -180,20 +219,14 @@ class TrainArguments(TorchAccArguments, TunerArguments, Seq2SeqTrainingOverrideA
             assert os.path.isdir(py_dir)
             py_file = os.path.basename(external_plugin)
             sys.path.insert(0, py_dir)
-            try:
-                import importlib
-                importlib.import_module(py_file.split('.')[0])
-            except Exception:  # noqa
-                import traceback
-                logger.warn(f'⚠️⚠️⚠️Plugin {external_plugin} import failed.')
-                logger.warn(traceback.format_exc())
+            importlib.import_module(py_file.split('.')[0])
 
     def _init_deepspeed(self):
         if self.deepspeed:
             require_version('deepspeed')
             if is_mp():
                 raise ValueError('DeepSpeed is not compatible with MP. '
-                                 f'n_gpu: {torch.cuda.device_count()}, '
+                                 f'n_gpu: {get_device_count()}, '
                                  f'local_world_size: {self.local_world_size}.')
 
             ds_config_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ds_config'))
@@ -207,6 +240,11 @@ class TrainArguments(TorchAccArguments, TunerArguments, Seq2SeqTrainingOverrideA
                     break
 
             self.deepspeed = self.parse_to_dict(self.deepspeed)
+            if self.zero_hpz_partition_size is not None:
+                assert 'zero_optimization' in self.deepspeed
+                self.deepspeed['zero_optimization']['zero_hpz_partition_size'] = self.zero_hpz_partition_size
+                logger.warn('If `zero_hpz_partition_size`(ZeRO++) causes grad_norm NaN, please'
+                            ' try `--torch_dtype float16`')
             logger.info(f'Using deepspeed: {self.deepspeed}')
 
     def _init_liger(self):
